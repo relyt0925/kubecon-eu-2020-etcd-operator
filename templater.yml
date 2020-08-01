@@ -1,0 +1,156 @@
+- hosts: all
+  tasks:
+  - name: Set necessary template variables
+    set_fact:
+      etcd_operator_image: "registry.ng.bluemix.net/armada-master/etcd-operator:46f4ee3114a3bcf7e3e1d0b95cb9ba18335cd110"
+      etcd_healthcheck_image: "registry.ng.bluemix.net/armada-master/etcd-healthchecker:46f4ee3114a3bcf7e3e1d0b95cb9ba18335cd110"
+      busy_box_image: "registry.ng.bluemix.net/armada-master/busybox:1.28.4-glibc"
+      etcd_repository: "registry.ng.bluemix.net/armada-master/etcd"
+      etcd_version: "3.4.2"
+      cluster_id: "cluster1"
+      namespace_to_install: default
+      curl_image: "registry.ng.bluemix.net/armada-master/etcd-operator-curl:46f4ee3114a3bcf7e3e1d0b95cb9ba18335cd110"
+      etcd_operator_template_path: "{{playbook_dir }}/operators"
+      etcd_cluster_template_path: "{{ playbook_dir }}/phase1"
+      output_directory_path: "{{ playbook_dir }}/outputdir"
+      cert_resources_path: "{{ playbook_dir }}/certresources"
+      cert_output_directory_path: "{{ playbook_dir }}/outputdir/certs"
+      etcd_operator_manifests_output_directory_path: "{{ playbook_dir }}/outputdir/etcdoperatormanifests"
+      etcd_cluster_manifests_directory: "{{ playbook_dir }}/outputdir/etcdclustermanifests"
+      etcd_cluster_cert_secrets_directory: "{{ playbook_dir }}/outputdir/etcdclustercertsecrets"
+
+  - name: initialize output directory
+    file:
+      dest: "{{ cert_output_directory_path }}"
+      state: directory
+    with_items:
+      - absent
+      - directory
+
+  - name: initialize output directory
+    file:
+      dest: "{{ etcd_cluster_cert_secrets_directory }}"
+      state: directory
+    with_items:
+      - absent
+      - directory
+
+  - name: initialize output directory
+    file:
+      dest: "{{ etcd_operator_manifests_output_directory_path }}"
+      state: directory
+    with_items:
+      - absent
+      - directory
+
+  - name: initialize output directory
+    file:
+      dest: "{{ etcd_cluster_manifests_directory }}"
+      state: directory
+    with_items:
+      - absent
+      - directory
+
+  - name: template the necessary files
+    template:
+      src: "{{ item.src }}"
+      dest: "{{ item.dest }}"
+      mode: "{{ item.mode }}"
+    with_items:
+      - { src: "{{ cert_resources_path }}/default-ca.json.j2", dest: "{{ cert_output_directory_path }}/default-ca.json", mode: "0600" }
+      - { src: "{{ cert_resources_path }}/etcd-client-csr.json.j2", dest: "{{ cert_output_directory_path }}/etcd-client-csr.json", mode: "0600" }
+      - { src: "{{ cert_resources_path }}/etcd-peer-csr.json.j2", dest: "{{ cert_output_directory_path }}/etcd-peer-csr.json", mode: "0600" }
+      - { src: "{{ cert_resources_path }}/etcd-server-csr.json.j2", dest: "{{ cert_output_directory_path }}/etcd-server-csr.json", mode: "0600" }
+      - { src: "{{ cert_resources_path }}/ca-config.json", dest: "{{ cert_output_directory_path }}/ca-config.json", mode: "0600" }
+
+
+  - name: initialize etcd ca
+    shell: |
+      set -o pipefail
+      cat default-ca.json | cfssl gencert -initca - | cfssljson -bare "etcd-{{ cluster_id }}-ca"
+    register: _cfssl_ca
+    changed_when: "'signed certificate with serial number' in _cfssl_ca.stderr"
+    args:
+      chdir: "{{ cert_output_directory_path }}"
+      executable: /bin/bash
+
+  - name: initialize peer etcd certs
+    shell: |
+      set -o pipefail
+      cfssl gencert \
+      -ca="etcd-{{ cluster_id }}-ca.pem" \
+      -ca-key="etcd-{{ cluster_id }}-ca-key.pem"  \
+      -config=ca-config.json \
+      -profile=kubernetes \
+      etcd-peer-csr.json | cfssljson -bare "etcd-{{ cluster_id }}-peer"
+    register: _cfssl_etcd_peer
+    changed_when: "'signed certificate with serial number' in _cfssl_etcd_peer.stderr"
+    args:
+      chdir: "{{ cert_output_directory_path }}"
+      executable: /bin/bash
+
+
+  - name: initialize server etcd certs
+    shell: |
+      set -o pipefail
+      cfssl gencert \
+      -ca="etcd-{{ cluster_id }}-ca.pem" \
+      -ca-key="etcd-{{ cluster_id }}-ca-key.pem"  \
+      -config=ca-config.json \
+      -profile=kubernetes \
+      etcd-server-csr.json | cfssljson -bare "etcd-{{ cluster_id }}-server"
+    register: _cfssl_etcd_server
+    changed_when: "'signed certificate with serial number' in _cfssl_etcd_server.stderr"
+    args:
+      chdir: "{{ cert_output_directory_path }}"
+      executable: /bin/bash
+
+
+  - name: initialize client etcd certs
+    shell: |
+      set -o pipefail
+      cfssl gencert \
+      -ca="etcd-{{ cluster_id }}-ca.pem" \
+      -ca-key="etcd-{{ cluster_id }}-ca-key.pem"  \
+      -config=ca-config.json \
+      -profile=kubernetes \
+      etcd-client-csr.json | cfssljson -bare "etcd-{{ cluster_id }}-client"
+    register: _cfssl_etcd_client
+    changed_when: "'signed certificate with serial number' in _cfssl_etcd_client.stderr"
+    args:
+      chdir: "{{ cert_output_directory_path }}"
+      executable: /bin/bash
+
+  - name: template the files necessary for an operator install
+    template:
+      src: "{{ item.src }}"
+      dest: "{{ item.dest }}"
+      mode: "{{ item.mode }}"
+    with_items:
+      - { src: "{{ etcd_operator_template_path }}/etcd-operator.yaml.j2", dest: "{{ etcd_operator_manifests_output_directory_path }}/etcd-operator.yaml", mode: "0600" }
+      - { src: "{{ etcd_operator_template_path }}/etcd-operator-crd-creation-cluster-role.yaml", dest: "{{ etcd_operator_manifests_output_directory_path }}/etcd-operator-crd-creation-cluster-role.yaml", mode: "0600" }
+      - { src: "{{ etcd_operator_template_path }}/etcd-operator-crd-creation-role-binding.yaml.j2", dest: "{{ etcd_operator_manifests_output_directory_path }}/etcd-operator-crd-creation-role-binding.yaml", mode: "0600" }
+      - { src: "{{ etcd_operator_template_path }}/etcd-operator-role.yaml", dest: "{{ etcd_operator_manifests_output_directory_path }}/etcd-operator-role.yaml", mode: "0600" }
+      - { src: "{{ etcd_operator_template_path }}/etcd-operator-role-binding.yaml", dest: "{{ etcd_operator_manifests_output_directory_path }}/etcd-operator-role-binding.yaml", mode: "0600" }
+      - { src: "{{ etcd_operator_template_path }}/etcd-operator-sidecar-role.yaml", dest: "{{ etcd_operator_manifests_output_directory_path }}/etcd-operator-sidecar-role.yaml", mode: "0600" }
+      - { src: "{{ etcd_operator_template_path }}/etcd-operator-sidecar-role-binding.yaml", dest: "{{ etcd_operator_manifests_output_directory_path }}/etcd-operator-sidecar-role-binding.yaml", mode: "0600" }
+      - { src: "{{ etcd_operator_template_path }}/etcd-service-account.yaml", dest: "{{ etcd_operator_manifests_output_directory_path }}/etcd-service-account.yaml", mode: "0600" }
+      - { src: "{{ etcd_operator_template_path }}/cos-credentials-secret.yaml.j2", dest: "{{ etcd_operator_manifests_output_directory_path }}/cos-credentials-secret.yaml", mode: "0600" }
+
+  - name: template the files necessary for a cluster initialization/upgrade
+    template:
+      src: "{{ item.src }}"
+      dest: "{{ item.dest }}"
+      mode: "{{ item.mode }}"
+    with_items:
+      - { src: "{{ etcd_cluster_template_path }}/etcd-client-tls-secret.yaml.j2", dest: "{{ etcd_cluster_cert_secrets_directory }}/etcd-client-tls-secret.yaml", mode: "0600" }
+      - { src: "{{ etcd_cluster_template_path }}/etcd-peer-tls-secret.yaml.j2", dest: "{{ etcd_cluster_cert_secrets_directory }}/etcd-peer-tls-secret.yaml", mode: "0600" }
+      - { src: "{{ etcd_cluster_template_path }}/etcd-server-tls-secret.yaml.j2", dest: "{{ etcd_cluster_cert_secrets_directory }}/etcd-server-tls-secret.yaml", mode: "0600" }
+
+  - name: template the files necessary for a cluster initialization/upgrade
+    template:
+      src: "{{ item.src }}"
+      dest: "{{ item.dest }}"
+      mode: "{{ item.mode }}"
+    with_items:
+      - { src: "{{ etcd_cluster_template_path }}/etcd-cluster.yaml.j2", dest: "{{ etcd_cluster_manifests_directory }}/etcd-cluster.yaml", mode: "0600" }

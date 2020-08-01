@@ -1,0 +1,12 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: etcd-operator-crdcreation-{{ namespace_to_install }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: etcd-operator-crdcreation
+subjects:
+  - kind: ServiceAccount
+    name: etcd-operator
+    namespace: "{{ namespace_to_install }}"

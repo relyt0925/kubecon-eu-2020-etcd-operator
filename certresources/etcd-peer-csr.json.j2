@@ -1,0 +1,28 @@
+{
+	    "CN": "etcd-peer",
+	    "hosts": [
+	        "127.0.0.1",
+            "localhost",
+            "etcd-{{ cluster_id }}",
+            "etcd-{{ cluster_id }}-client-service-np",
+            "etcd-{{ cluster_id }}-client",
+            "*.{{ namespace_to_install }}.svc.cluster.local",
+            "*.{{ namespace_to_install }}.cluster.local",
+            "*.{{ namespace_to_install }}.svc",
+            "*.{{ namespace_to_install }}",
+            "*.etcd-{{ cluster_id }}.{{ namespace_to_install }}.svc.cluster.local",
+            "*.etcd-{{ cluster_id }}.{{ namespace_to_install }}.cluster.local",
+            "*.etcd-{{ cluster_id }}.{{ namespace_to_install }}.svc"
+	    ],
+	    "key": {
+	        "algo": "rsa",
+	        "size": 2048
+	    },
+	    "names": [
+	        {
+	            "C": "US",
+	            "L": "CA",
+	            "ST": "San Francisco"
+	        }
+	    ]
+}
